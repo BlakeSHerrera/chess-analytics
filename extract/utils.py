@@ -41,8 +41,8 @@ def get_checksum(
 
 def download_item(record: RecordItem):
     logging.info(f'Downloading {record.url} to {record.local_path}')
-    temp_file = str(record.local_path) + '.tmp'
-    wget.download(record.url, temp_file, bar = wget_progress_bar)
+    temp_file = record.local_path.with_suffix(record.local_path.suffix + '.tmp')
+    wget.download(record.url, str(temp_file), bar = wget_progress_bar)
     checksum = get_checksum(temp_file)
     if checksum != record.checksum:
         msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'

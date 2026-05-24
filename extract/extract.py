@@ -90,9 +90,9 @@ def worker_main(record: RecordItem):
     if not os.path.exists(record.local_path):
         utils.download_item(record)
     i = record.file_name.index('-')
-    year, month = record.file_name[i - 4:i + 2].split('-')
+    year, month = record.file_name[i - 4:i + 3].split('-')
     path = DATALAKE / f'lichess_db_standard_rated/year={year}/month={month}'
-    os.makedirs(path, exist_ok=True)
+    os.makedirs(path, exist_ok = True)
 
     for i, batch in enumerate(itertools.batched(parse(record), n = 5_000_000)):
         df = pd.DataFrame(batch)

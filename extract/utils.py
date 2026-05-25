@@ -71,9 +71,10 @@ def download_item(record: RecordItem, pbar_position: int):
             pbar.update(len(chunk))
         pbar.close()
 
-        checksum = get_checksum(temp_file.name, pbar_position)
+        checksum = get_checksum(pathlib.Path(temp_file.name), pbar_position)
         if checksum != record.checksum:
             msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'
             logging.error(msg)
             raise Exception(msg)
+        temp_file.close()
         shutil.move(temp_file.name, record.local_path)

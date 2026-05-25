@@ -5,15 +5,13 @@ from datetime import datetime
 import io
 import itertools
 import logging
-import multiprocessing
+import multiprocessing, multiprocessing.managers
 import os
 import pathlib
 import posixpath
 import queue
-import re
 import sqlite3
 import time
-from tqdm import tqdm
 from typing import Callable, Iterable, Mapping
 import urllib.parse
 
@@ -76,6 +74,11 @@ class RecordItem:
         conn.execute(UPSERT_FILE, self.as_tuple())
 
 
+class QueueManager(multiprocessing.managers.SyncManager):
+    pass
+QueueManager.register('PriorityQueue', queue.PriorityQueue)
+
+
 def main():
     conn = sqlite3.connect(DATALAKE / 'db.sqlite')
     conn.execute(CREATE_TABLE)
@@ -99,20 +102,27 @@ def main():
             return True
         return False
 
-    with concurrent.futures.ProcessPoolExecutor(NUM_WORKERS) as executor:
+    with QueueManager() as manager, \
+         concurrent.futures.ProcessPoolExecutor(NUM_WORKERS) as executor:
         futures: dict[concurrent.futures.Future, RecordItem] = dict()
-        manager = multiprocessing.Manager()
         pbar_queue: queue.PriorityQueue = manager.PriorityQueue()
         for i in range(NUM_WORKERS):
             pbar_queue.put(i + 1)
 
-        for url in tqdm(file_list, desc = 'Lichess DB', unit = 'files'):
+        for url in file_list:
             file_name = posixpath.basename(urllib.parse.urlparse(url).path)
             if should_download(file_name):
                 record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
                 futures[executor.submit(worker_main, record, pbar_queue)] = record
 
-        for future in concurrent.futures.as_completed(futures):
+        for future in tqdm(
+            concurrent.futures.as_completed(futures), 
+            total = len(futures),
+            desc = 'Lichess DB', 
+            unit = 'files', 
+            position = 0, 
+            leave = True
+        ):
             record: RecordItem = futures[future]
             _ = future.result()
             record.mark_complete(conn)
@@ -130,12 +140,11 @@ def clean_cache():
             os.remove(file)
 
 
-def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue):
-    pbar_position = pbar_queue.get()
+def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue[int]):
+    pbar_position: int = pbar_queue.get()
     try:
         if not os.path.exists(record.local_path):
-            logging.info('Downloading', record.file_local_path)
-            utils.download_item(record)
+            utils.download_item(record, pbar_position)
         write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers, pbar_position)
         # Parsing moves with python-chess is painfully slow, ~90 kb/s
         # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
@@ -164,4 +173,6 @@ def write_files(
 
 
 if __name__ == '__main__':
+    start = datetime.now()
     main()
+    logging.info(f'Done in {datetime.now() - start}')

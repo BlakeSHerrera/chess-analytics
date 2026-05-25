@@ -4,7 +4,6 @@ import dataclasses
 from datetime import datetime
 import io
 import itertools
-import logging
 import multiprocessing, multiprocessing.managers
 import os
 import pathlib
@@ -16,6 +15,7 @@ from typing import Callable, Iterable, Mapping
 import urllib.parse
 
 import dotenv
+from loguru import logger
 import pandas as pd
 from tqdm import tqdm
 import zstandard
@@ -28,12 +28,21 @@ dotenv.load_dotenv(override = True)
 
 DATALAKE = pathlib.Path(os.environ['DATALAKE_PATH'])
 CACHE = DATALAKE / 'cache'
-os.makedirs(CACHE, exist_ok = True)
+LOGS = DATALAKE / 'logs'
+for i in (DATALAKE, CACHE, LOGS):
+    os.makedirs(i, exist_ok = True)
 NUM_WORKERS = int(os.environ['NUM_WORKERS'])
 
 CREATE_TABLE, QUERY_FILE, UPSERT_FILE = (
     pathlib.Path(f'extract/{i}.sql').read_text() for i in 
         ['create_table', 'query_file', 'upsert_file'])
+
+logger.remove()
+logger.add(
+    LOGS / 'extract.log', 
+    level = os.environ['LOG_LEVEL'], 
+    rotation = os.environ['LOG_ROTATION'], 
+    enqueue = True)
 
 
 @dataclasses.dataclass
@@ -57,7 +66,7 @@ class RecordItem:
                     desc = f'{self.file_name}',
                     unit = 'B',
                     unit_scale = True,
-                    unit_divisor = 2 ** 10,
+                    unit_divisor = utils.BUFFER_SIZE_BYTES,
                     position = pbar_position,
                     leave = False))
             decompressor = stack.enter_context(
@@ -72,6 +81,7 @@ class RecordItem:
     def mark_complete(self, conn: sqlite3.Connection):
         self.status = 'complete'
         conn.execute(UPSERT_FILE, self.as_tuple())
+        conn.commit()
 
 
 class QueueManager(multiprocessing.managers.SyncManager):
@@ -80,7 +90,7 @@ QueueManager.register('PriorityQueue', queue.PriorityQueue)
 
 
 def main():
-    conn = sqlite3.connect(DATALAKE / 'db.sqlite')
+    conn = sqlite3.connect(DATALAKE / 'raw_metadata.sqlite')
     conn.execute(CREATE_TABLE)
     checksums_file = utils.request('GET', 'https://database.lichess.org/standard/sha256sums.txt').text.strip().split('\n')
     checksums = {file: checksum for checksum, file in map(str.split, checksums_file)}
@@ -115,14 +125,15 @@ def main():
                 record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
                 futures[executor.submit(worker_main, record, pbar_queue)] = record
 
+        if not futures:
+            logger.info('Nothing to do!')
         for future in tqdm(
-            concurrent.futures.as_completed(futures), 
-            total = len(futures),
-            desc = 'Lichess DB', 
-            unit = 'files', 
-            position = 0, 
-            leave = True
-        ):
+                concurrent.futures.as_completed(futures), 
+                total = len(futures),
+                desc = 'Lichess DB', 
+                unit = 'files', 
+                position = 0, 
+                leave = True):
             record: RecordItem = futures[future]
             _ = future.result()
             record.mark_complete(conn)
@@ -136,7 +147,7 @@ def clean_cache():
         modification_time = file.stat().st_mtime
         age_seconds = time.time() - modification_time
         if age_seconds > expiry:
-            logging.info(f'Removing cached file {file}; age is {age_seconds}s, expiry is {expiry}s')
+            logger.info(f'Removing cached file {file}; age is {age_seconds}s, expiry is {expiry}s')
             os.remove(file)
 
 
@@ -151,12 +162,13 @@ def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue[int]):
     finally:
         pbar_queue.put(pbar_position)
 
+
 def write_files(
         record: RecordItem, 
         path: pathlib.Path, 
         parser: Callable[[io.TextIOBase], Iterable[Mapping]],
         pbar_position: int, 
-        n: int = 5_000_000):
+        n: int = int(os.environ['ROWS_PER_PARQUET'])):
     i = record.file_name.index('-')
     year, month = record.file_name[i - 4:i + 3].split('-')
     path = path / f'year={year}/month={month}'
@@ -170,9 +182,11 @@ def write_files(
             df.to_parquet(
                 path = path / f'{i:04d}.parquet',
                 compression = 'zstd')
+            logger.info(f'Wrote {path / f"{i:04d}.parquet"}')
 
 
 if __name__ == '__main__':
     start = datetime.now()
+    logger.info('Process initialized.')
     main()
-    logging.info(f'Done in {datetime.now() - start}')
+    logger.info(f'Done in {datetime.now() - start}')

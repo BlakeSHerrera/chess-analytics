@@ -1,18 +1,21 @@
 import contextlib
 import functools
 import hashlib
-import logging
 import os
 import pathlib
 import shutil
 import tempfile
 from typing import Callable
 
+from loguru import logger
 import requests
 from tqdm import tqdm
 import wget
 
 from extract import RecordItem
+
+
+BUFFER_SIZE_BYTES = int(os.environ['BUFFER_SIZE_KB']) * 2 ** 10
 
 
 @functools.wraps(requests.request)
@@ -30,10 +33,10 @@ def get_checksum(
     pbar_position: int,
     algorithm: Callable = hashlib.sha256,
 ) -> str:
-    logging.info(f'Checking {algorithm.__name__} on {path}')
+    logger.info(f'Checking {algorithm.__name__} on {path}')
     with contextlib.ExitStack() as stack:
         fp = stack.enter_context(
-            open(path, 'rb'))
+            open(path, 'rb', buffering = BUFFER_SIZE_BYTES))
         fp_progress = stack.enter_context(
             tqdm.wrapattr(
                 fp,
@@ -49,10 +52,10 @@ def get_checksum(
 
 
 def download_item(record: RecordItem, pbar_position: int):
-    logging.info(f'Downloading {record.url} to {record.local_path}')
+    logger.info(f'Downloading {record.url} to {record.local_path}')
     with contextlib.ExitStack() as stack:
         temp_file = stack.enter_context(
-            tempfile.NamedTemporaryFile(mode = 'w+b', delete = False))
+            tempfile.NamedTemporaryFile(mode = 'w+b', delete = False, buffering = BUFFER_SIZE_BYTES))
         response = stack.enter_context(
             requests.get(record.url, stream = True))
         pbar = stack.enter_context(
@@ -66,15 +69,16 @@ def download_item(record: RecordItem, pbar_position: int):
                 leave = False))
         
         response.raise_for_status()
-        for chunk in response.iter_content(2 ** 20):
+        for chunk in response.iter_content(BUFFER_SIZE_BYTES):
             temp_file.write(chunk)
             pbar.update(len(chunk))
         pbar.close()
 
+        temp_file.close()
         checksum = get_checksum(pathlib.Path(temp_file.name), pbar_position)
         if checksum != record.checksum:
             msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'
-            logging.error(msg)
+            logger.error(msg)
             raise Exception(msg)
-        temp_file.close()
+        
         shutil.move(temp_file.name, record.local_path)

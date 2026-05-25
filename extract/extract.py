@@ -1,3 +1,4 @@
+import contextlib
 import dataclasses
 from datetime import datetime
 import io
@@ -9,18 +10,22 @@ import posixpath
 import re
 import sqlite3
 import time
-from typing import Iterable
+from tqdm import tqdm
+from typing import Callable, Iterable, Mapping
 import urllib.parse
 
+import chess, chess.pgn
 import dotenv
 import pandas as pd
 from tqdm import tqdm
 import zstandard
 
+import parse_pgn
 import utils
 
 
-EPOCH = datetime.now()
+dotenv.load_dotenv(override = True)
+
 DATALAKE = pathlib.Path(os.environ['DATALAKE_PATH'])
 CACHE = DATALAKE / 'cache'
 os.makedirs(CACHE, exist_ok = True)
@@ -33,11 +38,31 @@ CREATE_TABLE, QUERY_FILE, UPSERT_FILE = (
 
 @dataclasses.dataclass
 class RecordItem:
+
     url: str
     file_name: str
     status: str
     checksum: str
     local_path: str | pathlib.Path
+
+    def stream(self):
+        with contextlib.ExitStack() as stack:
+            fp = stack.enter_context(
+                open(self.local_path, 'rb'))
+            fp_progress = stack.enter_context(
+                tqdm.wrapattr(
+                    fp,
+                    'read',
+                    total = os.path.getsize(self.local_path),
+                    desc = f'{self.file_name}',
+                    unit = 'B',
+                    unit_scale = True,
+                    unit_divisor = 2 ** 10))
+            decompressor = stack.enter_context(
+                zstandard.ZstdDecompressor().stream_reader(fp_progress))
+            text_stream = stack.enter_context(
+                io.TextIOWrapper(decompressor, encoding = 'utf-8'))
+            return stack.pop_all(), text_stream
 
 
 def main():
@@ -89,46 +114,26 @@ def clean_cache():
 def worker_main(record: RecordItem):
     if not os.path.exists(record.local_path):
         utils.download_item(record)
+    write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers)
+    # Parsing moves with python-chess is painfully slow, ~90 kb/s
+    # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
+
+
+def write_files(record: RecordItem, path: pathlib.Path, parser: Callable[[io.TextIOBase], Iterable[Mapping]], n: int = 5_000_000):
     i = record.file_name.index('-')
     year, month = record.file_name[i - 4:i + 3].split('-')
-    path = DATALAKE / f'lichess_db_standard_rated/year={year}/month={month}'
+    path = path / f'year={year}/month={month}'
     os.makedirs(path, exist_ok = True)
 
-    for i, batch in enumerate(itertools.batched(parse(record), n = 5_000_000)):
-        df = pd.DataFrame(batch)
-        df['ingest_timestamp'] = EPOCH
-        df.to_parquet(
-            path = path / f'{i:04d}.parquet', 
-            compression = 'zstd')
+    cleanup_stack, stream = record.stream()
+    with cleanup_stack:
+        for i, batch in enumerate(itertools.batched(parser(stream), n = n)):
+            df = pd.DataFrame(batch)
+            df['ingest_timestamp'] = datetime.now()
+            df.to_parquet(
+                path = path / f'{i:04d}.parquet',
+                compression = 'zstd')
 
-
-def parse(record: RecordItem) -> Iterable[dict]:
-    decompressor = zstandard.ZstdDecompressor()
-    with open(record.local_path, 'rb') as fp, \
-         tqdm.wrapattr(
-             fp,
-             'read',
-             total = os.path.getsize(record.local_path),
-             desc = f'{record.file_name}',
-             unit = 'B',
-             unit_scale = True,
-             unit_divisor = 2 ** 10
-         ) as fp_progress, \
-         decompressor.stream_reader(fp_progress) as stream:
-        
-        text_stream = io.TextIOWrapper(stream, encoding = 'utf-8')
-        tags = dict()
-        for line in map(str.strip, text_stream):
-            if line:
-                i = line.index(' ')
-                tags[line[1:i]] = line[i + 2:-2]
-            else:
-                pgn = next(text_stream).strip()
-                # tags['PGN'] = pgn
-                next(text_stream)
-                yield tags
-                tags = dict()
 
 if __name__ == '__main__':
-    dotenv.load_dotenv(override = True)
     main()

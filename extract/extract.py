@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import pathlib
 import posixpath
+import queue
 import re
 import sqlite3
 import time
@@ -30,7 +31,7 @@ dotenv.load_dotenv(override = True)
 DATALAKE = pathlib.Path(os.environ['DATALAKE_PATH'])
 CACHE = DATALAKE / 'cache'
 os.makedirs(CACHE, exist_ok = True)
-TAG_PATTERN = re.compile(r'\[(\w+) "(.*)"\]')
+NUM_WORKERS = int(os.environ['NUM_WORKERS'])
 
 CREATE_TABLE, QUERY_FILE, UPSERT_FILE = (
     pathlib.Path(f'extract/{i}.sql').read_text() for i in 
@@ -46,7 +47,7 @@ class RecordItem:
     checksum: str
     local_path: str | pathlib.Path
 
-    def stream(self):
+    def stream(self, pbar_position: int):
         with contextlib.ExitStack() as stack:
             fp = stack.enter_context(
                 open(self.local_path, 'rb', buffering = 2 ** 20))
@@ -58,7 +59,9 @@ class RecordItem:
                     desc = f'{self.file_name}',
                     unit = 'B',
                     unit_scale = True,
-                    unit_divisor = 2 ** 10))
+                    unit_divisor = 2 ** 10,
+                    position = pbar_position,
+                    leave = False))
             decompressor = stack.enter_context(
                 zstandard.ZstdDecompressor().stream_reader(fp_progress))
             text_stream = stack.enter_context(
@@ -96,14 +99,18 @@ def main():
             return True
         return False
 
-    with concurrent.futures.ProcessPoolExecutor(4) as executor:
+    with concurrent.futures.ProcessPoolExecutor(NUM_WORKERS) as executor:
         futures: dict[concurrent.futures.Future, RecordItem] = dict()
+        manager = multiprocessing.Manager()
+        pbar_queue: queue.PriorityQueue = manager.PriorityQueue()
+        for i in range(NUM_WORKERS):
+            pbar_queue.put(i + 1)
 
         for url in tqdm(file_list, desc = 'Lichess DB', unit = 'files'):
             file_name = posixpath.basename(urllib.parse.urlparse(url).path)
             if should_download(file_name):
                 record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
-                futures[executor.submit(worker_main, record)] = record
+                futures[executor.submit(worker_main, record, pbar_queue)] = record
 
         for future in concurrent.futures.as_completed(futures):
             record: RecordItem = futures[future]
@@ -123,26 +130,30 @@ def clean_cache():
             os.remove(file)
 
 
-def worker_main(record: RecordItem):
-    if not os.path.exists(record.local_path):
-        logging.info('Downloading', record.file_local_path)
-        utils.download_item(record)
-    write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers)
-    # Parsing moves with python-chess is painfully slow, ~90 kb/s
-    # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
-
+def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue):
+    pbar_position = pbar_queue.get()
+    try:
+        if not os.path.exists(record.local_path):
+            logging.info('Downloading', record.file_local_path)
+            utils.download_item(record)
+        write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers, pbar_position)
+        # Parsing moves with python-chess is painfully slow, ~90 kb/s
+        # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
+    finally:
+        pbar_queue.put(pbar_position)
 
 def write_files(
         record: RecordItem, 
         path: pathlib.Path, 
-        parser: Callable[[io.TextIOBase], Iterable[Mapping]], 
+        parser: Callable[[io.TextIOBase], Iterable[Mapping]],
+        pbar_position: int, 
         n: int = 5_000_000):
     i = record.file_name.index('-')
     year, month = record.file_name[i - 4:i + 3].split('-')
     path = path / f'year={year}/month={month}'
     os.makedirs(path, exist_ok = True)
 
-    cleanup_stack, stream = record.stream()
+    cleanup_stack, stream = record.stream(pbar_position)
     with cleanup_stack:
         for i, batch in enumerate(itertools.batched(parser(stream), n = n)):
             df = pd.DataFrame(batch)

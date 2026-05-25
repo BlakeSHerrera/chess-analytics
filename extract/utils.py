@@ -24,7 +24,8 @@ def wget_progress_bar(current, total, width = 80):
 
 def get_checksum(
     path: pathlib.Path, 
-    algorithm: Callable = hashlib.sha256
+    pbar_position: int,
+    algorithm: Callable = hashlib.sha256,
 ) -> str:
     logging.info(f'Checking {algorithm.__name__} on {path}')
     with open(path, 'rb') as fp:
@@ -35,16 +36,18 @@ def get_checksum(
             desc = f'{algorithm.__name__} {path.stem}',
             unit = 'B',
             unit_scale = True,
-            unit_divisor = 2 ** 10
+            unit_divisor = 2 ** 10,
+            position = pbar_position,
+            leave = False
         ) as fp_progress:
             return hashlib.file_digest(fp_progress, algorithm).hexdigest()
 
 
-def download_item(record: RecordItem):
+def download_item(record: RecordItem, pbar_position: int):
     logging.info(f'Downloading {record.url} to {record.local_path}')
     temp_file = record.local_path.with_suffix(record.local_path.suffix + '.tmp')
     wget.download(record.url, str(temp_file), bar = wget_progress_bar)
-    checksum = get_checksum(temp_file)
+    checksum = get_checksum(temp_file, pbar_position)
     if checksum != record.checksum:
         msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'
         logging.error(msg)

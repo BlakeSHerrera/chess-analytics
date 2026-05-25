@@ -26,6 +26,7 @@ def get_checksum(
     path: pathlib.Path, 
     algorithm: Callable = hashlib.sha256
 ) -> str:
+    logging.info(f'Checking {algorithm.__name__} on {path}')
     with open(path, 'rb') as fp:
         with tqdm.wrapattr(
             fp,

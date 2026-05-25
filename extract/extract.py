@@ -1,9 +1,11 @@
+import concurrent.futures
 import contextlib
 import dataclasses
 from datetime import datetime
 import io
 import itertools
 import logging
+import multiprocessing
 import os
 import pathlib
 import posixpath
@@ -14,7 +16,6 @@ from tqdm import tqdm
 from typing import Callable, Iterable, Mapping
 import urllib.parse
 
-import chess, chess.pgn
 import dotenv
 import pandas as pd
 from tqdm import tqdm
@@ -48,7 +49,7 @@ class RecordItem:
     def stream(self):
         with contextlib.ExitStack() as stack:
             fp = stack.enter_context(
-                open(self.local_path, 'rb'))
+                open(self.local_path, 'rb', buffering = 2 ** 20))
             fp_progress = stack.enter_context(
                 tqdm.wrapattr(
                     fp,
@@ -63,6 +64,13 @@ class RecordItem:
             text_stream = stack.enter_context(
                 io.TextIOWrapper(decompressor, encoding = 'utf-8'))
             return stack.pop_all(), text_stream
+        
+    def as_tuple(self) -> tuple[str]:
+        return (self.url, self.file_name, self.status, self.checksum, str(self.local_path))
+
+    def mark_complete(self, conn: sqlite3.Connection):
+        self.status = 'complete'
+        conn.execute(UPSERT_FILE, self.as_tuple())
 
 
 def main():
@@ -88,16 +96,20 @@ def main():
             return True
         return False
 
-    todo: list[RecordItem] = []
-    for url in tqdm(file_list, desc = 'Lichess DB', unit = 'files'):
-        file_name = posixpath.basename(urllib.parse.urlparse(url).path)
-        if should_download(file_name):
-            todo.append(RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name))
-    
-    # TODO add parallelism via map-reduce paradigm
-    for i in todo:
-        worker_main(i)
-        conn.execute(UPSERT_FILE, [i.url, i.file_name, 'complete', i.checksum, str(i.local_path)])
+    with concurrent.futures.ProcessPoolExecutor(4) as executor:
+        futures: dict[concurrent.futures.Future, RecordItem] = dict()
+
+        for url in tqdm(file_list, desc = 'Lichess DB', unit = 'files'):
+            file_name = posixpath.basename(urllib.parse.urlparse(url).path)
+            if should_download(file_name):
+                record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
+                futures[executor.submit(worker_main, record)] = record
+
+        for future in concurrent.futures.as_completed(futures):
+            record: RecordItem = futures[future]
+            _ = future.result()
+            record.mark_complete(conn)
+
     clean_cache()
 
 
@@ -113,13 +125,18 @@ def clean_cache():
 
 def worker_main(record: RecordItem):
     if not os.path.exists(record.local_path):
+        logging.info('Downloading', record.file_local_path)
         utils.download_item(record)
     write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers)
     # Parsing moves with python-chess is painfully slow, ~90 kb/s
     # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
 
 
-def write_files(record: RecordItem, path: pathlib.Path, parser: Callable[[io.TextIOBase], Iterable[Mapping]], n: int = 5_000_000):
+def write_files(
+        record: RecordItem, 
+        path: pathlib.Path, 
+        parser: Callable[[io.TextIOBase], Iterable[Mapping]], 
+        n: int = 5_000_000):
     i = record.file_name.index('-')
     year, month = record.file_name[i - 4:i + 3].split('-')
     path = path / f'year={year}/month={month}'

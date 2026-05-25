@@ -26,10 +26,10 @@ import utils
 
 dotenv.load_dotenv(override = True)
 
-DATALAKE = pathlib.Path(os.environ['DATALAKE_PATH'])
-CACHE = DATALAKE / 'cache'
-LOGS = DATALAKE / 'logs'
-for i in (DATALAKE, CACHE, LOGS):
+PROJECT_FOLDER = pathlib.Path('./data')
+CACHE = PROJECT_FOLDER / 'cache'
+LOGS = PROJECT_FOLDER / 'logs'
+for i in (PROJECT_FOLDER, CACHE, LOGS):
     os.makedirs(i, exist_ok = True)
 NUM_WORKERS = int(os.environ['NUM_WORKERS'])
 
@@ -90,7 +90,7 @@ QueueManager.register('PriorityQueue', queue.PriorityQueue)
 
 
 def main():
-    conn = sqlite3.connect(DATALAKE / 'raw_metadata.sqlite')
+    conn = sqlite3.connect(PROJECT_FOLDER / 'raw_metadata.sqlite')
     conn.execute(CREATE_TABLE)
     checksums_file = utils.request('GET', 'https://database.lichess.org/standard/sha256sums.txt').text.strip().split('\n')
     checksums = {file: checksum for checksum, file in map(str.split, checksums_file)}
@@ -156,7 +156,7 @@ def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue[int]):
     try:
         if not os.path.exists(record.local_path):
             utils.download_item(record, pbar_position)
-        write_files(record, DATALAKE / 'lichess_standard_rated_headers', parse_pgn.parse_headers, pbar_position)
+        write_files(record, PROJECT_FOLDER / 'lichess_standard_rated_headers', parse_pgn.parse_headers, pbar_position)
         # Parsing moves with python-chess is painfully slow, ~90 kb/s
         # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
     finally:

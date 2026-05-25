@@ -1,0 +1,10 @@
+services:
+  extract:
+    build: .
+    command: python extract/extract.py
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    tty: true
+    volumes:
+      - ${PROJECT_FOLDER}:/app/data

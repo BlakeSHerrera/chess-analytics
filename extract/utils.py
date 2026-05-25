@@ -1,8 +1,11 @@
+import contextlib
 import functools
 import hashlib
 import logging
 import os
 import pathlib
+import shutil
+import tempfile
 from typing import Callable
 
 import requests
@@ -28,28 +31,49 @@ def get_checksum(
     algorithm: Callable = hashlib.sha256,
 ) -> str:
     logging.info(f'Checking {algorithm.__name__} on {path}')
-    with open(path, 'rb') as fp:
-        with tqdm.wrapattr(
-            fp,
-            'read',
-            total = os.path.getsize(path),
-            desc = f'{algorithm.__name__} {path.stem}',
-            unit = 'B',
-            unit_scale = True,
-            unit_divisor = 2 ** 10,
-            position = pbar_position,
-            leave = False
-        ) as fp_progress:
-            return hashlib.file_digest(fp_progress, algorithm).hexdigest()
+    with contextlib.ExitStack() as stack:
+        fp = stack.enter_context(
+            open(path, 'rb'))
+        fp_progress = stack.enter_context(
+            tqdm.wrapattr(
+                fp,
+                'read',
+                total = os.path.getsize(path),
+                desc = f'{algorithm.__name__} {path.stem}',
+                unit = 'B',
+                unit_scale = True,
+                unit_divisor = 2 ** 10,
+                position = pbar_position,
+                leave = False))
+        return hashlib.file_digest(fp_progress, algorithm).hexdigest()
 
 
 def download_item(record: RecordItem, pbar_position: int):
     logging.info(f'Downloading {record.url} to {record.local_path}')
-    temp_file = record.local_path.with_suffix(record.local_path.suffix + '.tmp')
-    wget.download(record.url, str(temp_file), bar = wget_progress_bar)
-    checksum = get_checksum(temp_file, pbar_position)
-    if checksum != record.checksum:
-        msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'
-        logging.error(msg)
-        raise Exception(msg)
-    os.rename(temp_file, record.local_path)
+    with contextlib.ExitStack() as stack:
+        temp_file = stack.enter_context(
+            tempfile.NamedTemporaryFile(mode = 'w+b', delete = False))
+        response = stack.enter_context(
+            requests.get(record.url, stream = True))
+        pbar = stack.enter_context(
+            tqdm(
+                total = int(response.headers.get('Content-Length', '0')),
+                desc = f'Download {record.local_path}',
+                unit = 'B',
+                unit_scale = True,
+                unit_divisor = 2 ** 10,
+                position = pbar_position,
+                leave = False))
+        
+        response.raise_for_status()
+        for chunk in response.iter_content(2 ** 20):
+            temp_file.write(chunk)
+            pbar.update(len(chunk))
+        pbar.close()
+
+        checksum = get_checksum(temp_file.name, pbar_position)
+        if checksum != record.checksum:
+            msg = f'Invalid checksum after download for {temp_file} - expected {record.checksum} got {checksum}'
+            logging.error(msg)
+            raise Exception(msg)
+        shutil.move(temp_file.name, record.local_path)

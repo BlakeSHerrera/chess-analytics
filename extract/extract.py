@@ -2,6 +2,7 @@ import concurrent.futures
 import contextlib
 import dataclasses
 from datetime import datetime
+import gc
 import io
 import itertools
 import multiprocessing, multiprocessing.managers
@@ -16,7 +17,7 @@ import urllib.parse
 
 import dotenv
 from loguru import logger
-import pandas as pd
+import polars as pl
 from tqdm import tqdm
 import zstandard
 
@@ -174,17 +175,16 @@ def write_files(
     i = record.file_name.index('-')
     year, month = record.file_name[i - 4:i + 3].split('-')
     path = path / f'year={year}/month={month}'
-    os.makedirs(path, exist_ok = True)
 
     cleanup_stack, stream = record.stream(pbar_position)
     with cleanup_stack:
         for i, batch in enumerate(itertools.batched(parser(stream), n = n)):
-            df = pd.DataFrame(batch)
-            df['ingest_timestamp'] = datetime.now()
-            df.to_parquet(
-                path = path / f'{i:04d}.parquet',
-                compression = 'zstd')
-            logger.info(f'Wrote {path / f"{i:04d}.parquet"}')
+            df = pl.DataFrame(batch).with_columns(ingest_timestamp = datetime.now())
+            df.write_parquet(
+                file = path / f'{i:04d}.parquet',
+                compression = 'zstd',
+                mkdir = True)
+            logger.info(f'Wrote {len(df)} to {path / f"{i:04d}.parquet"}')
 
 
 if __name__ == '__main__':

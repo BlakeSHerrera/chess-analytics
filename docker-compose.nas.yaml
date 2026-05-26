@@ -1,0 +1,7 @@
+volumes:
+  chess_data:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "${NAS_PATH}"
+      o: "username=${NAS_USERNAME},password=${NAS_PASSWORD},file_mode=0777,dir_mode=0777,uid=1000,gid=1000,nobrl"

@@ -29,7 +29,7 @@ dotenv.load_dotenv(override = True)
 PROJECT_FOLDER = pathlib.Path('./data')
 CACHE = PROJECT_FOLDER / 'cache'
 LOGS = PROJECT_FOLDER / 'logs'
-for i in (PROJECT_FOLDER, CACHE, LOGS):
+for i in (PROJECT_FOLDER, CACHE, LOGS, PROJECT_FOLDER / 'tmp'):
     os.makedirs(i, exist_ok = True)
 NUM_WORKERS = int(os.environ['NUM_WORKERS'])
 
@@ -92,6 +92,7 @@ QueueManager.register('PriorityQueue', queue.PriorityQueue)
 def main():
     conn = sqlite3.connect(PROJECT_FOLDER / 'raw_metadata.sqlite')
     conn.execute(CREATE_TABLE)
+    conn.commit()
     checksums_file = utils.request('GET', 'https://database.lichess.org/standard/sha256sums.txt').text.strip().split('\n')
     checksums = {file: checksum for checksum, file in map(str.split, checksums_file)}
     file_list = utils.request('GET', 'https://database.lichess.org/standard/list.txt').text.strip().split('\n')
@@ -124,6 +125,7 @@ def main():
             if should_download(file_name):
                 record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
                 futures[executor.submit(worker_main, record, pbar_queue)] = record
+                time.sleep(1)  # Slightly stagger requests to lichess to avoid some too-many-requests errors.
 
         if not futures:
             logger.info('Nothing to do!')

@@ -6,3 +6,4 @@ notes.md
 config.yaml
 logs
 .cache
+compose.ps1

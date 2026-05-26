@@ -5,6 +5,10 @@ services:
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
+    stdin_open: true
     tty: true
     volumes:
-      - ${PROJECT_FOLDER}:/app/data
+      - chess_data:/app/data
+
+volumes:
+  chess_data:

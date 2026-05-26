@@ -5,6 +5,7 @@ import os
 import pathlib
 import shutil
 import tempfile
+import time
 from typing import Callable
 
 from loguru import logger
@@ -21,11 +22,15 @@ BUFFER_SIZE_BYTES = int(os.environ['BUFFER_SIZE_KB']) * 2 ** 10
 @functools.wraps(requests.request)
 def request(*args, **kwargs):
     r = requests.request(*args, **kwargs)
+    t = 1
+    while r.status_code == 429:
+        time.sleep(r.headers.get('Retry-After', t))
+        r = requests.request(*args, **kwargs)
+        t *= 2
+        if t >= 256:
+            break
     r.raise_for_status()
     return r
-
-def wget_progress_bar(current, total, width = 80):
-    return wget.bar_adaptive(round(current / 2 ** 20, 1), round(total / 2 ** 20, 1), width) + ' MB'
 
 
 def get_checksum(
@@ -55,9 +60,9 @@ def download_item(record: RecordItem, pbar_position: int):
     logger.info(f'Downloading {record.url} to {record.local_path}')
     with contextlib.ExitStack() as stack:
         temp_file = stack.enter_context(
-            tempfile.NamedTemporaryFile(mode = 'w+b', delete = False, buffering = BUFFER_SIZE_BYTES))
+            tempfile.NamedTemporaryFile(mode = 'w+b', dir = './data/cache', delete = False, buffering = BUFFER_SIZE_BYTES))
         response = stack.enter_context(
-            requests.get(record.url, stream = True))
+            request('GET', record.url, stream = True))
         pbar = stack.enter_context(
             tqdm(
                 total = int(response.headers.get('Content-Length', '0')),
@@ -68,7 +73,6 @@ def download_item(record: RecordItem, pbar_position: int):
                 position = pbar_position,
                 leave = False))
         
-        response.raise_for_status()
         for chunk in response.iter_content(BUFFER_SIZE_BYTES):
             temp_file.write(chunk)
             pbar.update(len(chunk))

@@ -9,6 +9,12 @@ services:
     tty: true
     volumes:
       - chess_data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations: 
+          memory: 3G
 
 volumes:
   chess_data:

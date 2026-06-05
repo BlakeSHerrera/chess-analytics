@@ -1,15 +1,11 @@
-import concurrent.futures
-import contextlib
 import dataclasses
 from datetime import datetime
-import gc
 import io
 import itertools
-import multiprocessing, multiprocessing.managers
 import os
 import pathlib
 import posixpath
-import queue
+import shutil
 import sqlite3
 import time
 from typing import Callable, Iterable, Mapping
@@ -19,7 +15,6 @@ import dotenv
 from loguru import logger
 import polars as pl
 from tqdm import tqdm
-import zstandard
 
 import parse_pgn
 import utils
@@ -32,11 +27,13 @@ CACHE = PROJECT_FOLDER / 'cache'
 LOGS = PROJECT_FOLDER / 'logs'
 for i in (PROJECT_FOLDER, CACHE, LOGS, PROJECT_FOLDER / 'tmp'):
     os.makedirs(i, exist_ok = True)
-NUM_WORKERS = int(os.environ['NUM_WORKERS'])
 
 CREATE_TABLE, QUERY_FILE, UPSERT_FILE = (
     pathlib.Path(f'extract/{i}.sql').read_text() for i in 
         ['create_table', 'query_file', 'upsert_file'])
+
+TARGET_FILE_SIZE_BYTES = int(os.environ['TARGET_FILE_SIZE_MB']) * 2 ** 20
+ROW_BUFFER_SIZE = int(os.environ['ROW_BUFFER_SIZE'])
 
 logger.remove()
 logger.add(
@@ -55,27 +52,6 @@ class RecordItem:
     checksum: str
     local_path: str | pathlib.Path
 
-    def stream(self, pbar_position: int):
-        with contextlib.ExitStack() as stack:
-            fp = stack.enter_context(
-                open(self.local_path, 'rb', buffering = 2 ** 20))
-            fp_progress = stack.enter_context(
-                tqdm.wrapattr(
-                    fp,
-                    'read',
-                    total = os.path.getsize(self.local_path),
-                    desc = f'{self.file_name}',
-                    unit = 'B',
-                    unit_scale = True,
-                    unit_divisor = utils.BUFFER_SIZE_BYTES,
-                    position = pbar_position,
-                    leave = False))
-            decompressor = stack.enter_context(
-                zstandard.ZstdDecompressor().stream_reader(fp_progress))
-            text_stream = stack.enter_context(
-                io.TextIOWrapper(decompressor, encoding = 'utf-8'))
-            return stack.pop_all(), text_stream
-        
     def as_tuple(self) -> tuple[str]:
         return (self.url, self.file_name, self.status, self.checksum, str(self.local_path))
 
@@ -83,11 +59,6 @@ class RecordItem:
         self.status = 'complete'
         conn.execute(UPSERT_FILE, self.as_tuple())
         conn.commit()
-
-
-class QueueManager(multiprocessing.managers.SyncManager):
-    pass
-QueueManager.register('PriorityQueue', queue.PriorityQueue)
 
 
 def main():
@@ -103,7 +74,9 @@ def main():
             return False
         db_records = conn.execute(QUERY_FILE, [file_name]).fetchall()
         if len(db_records) > 1:
-            raise Exception('Primary key violation in metadata table.')
+            msg = 'Primary key violation in metadata table.'
+            logger.exception(msg)
+            raise Exception(msg)
         if not db_records:
             return True
         file = RecordItem(*db_records[0])
@@ -114,77 +87,76 @@ def main():
             return True
         return False
 
-    with QueueManager() as manager, \
-         concurrent.futures.ProcessPoolExecutor(NUM_WORKERS) as executor:
-        futures: dict[concurrent.futures.Future, RecordItem] = dict()
-        pbar_queue: queue.PriorityQueue = manager.PriorityQueue()
-        for i in range(NUM_WORKERS):
-            pbar_queue.put(i + 1)
-
-        for url in file_list:
-            file_name = posixpath.basename(urllib.parse.urlparse(url).path)
-            if should_download(file_name):
-                record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
-                futures[executor.submit(worker_main, record, pbar_queue)] = record
-                time.sleep(1)  # Slightly stagger requests to lichess to avoid some too-many-requests errors.
-
-        if not futures:
-            logger.info('Nothing to do!')
-        for future in tqdm(
-                concurrent.futures.as_completed(futures), 
-                total = len(futures),
-                desc = 'Lichess DB', 
-                unit = 'files', 
-                position = 0, 
-                leave = True):
-            record: RecordItem = futures[future]
-            _ = future.result()
-            record.mark_complete(conn)
 
     clean_cache()
 
+    todo = list()
+    for url in file_list:
+        file_name = posixpath.basename(urllib.parse.urlparse(url).path)
+        if should_download(file_name):
+            record = RecordItem(url, file_name, 'incomplete', checksums[file_name], CACHE / file_name)
+            todo.append(record)
+
+    for record in tqdm(todo):
+        write_files(record, PROJECT_FOLDER / 'lichess_standard_rated_headers', parse_pgn.parse_headers)
+        record.mark_complete(conn)
+    
+    if not todo:
+        logger.info('Nothing to do!')
 
 def clean_cache():
     expiry = float(os.environ['CACHE_EXPIRY_SECONDS'])
+    for i in CACHE.rglob('*.parquet'):
+        i.unlink()
     for file in filter(pathlib.Path.is_file, CACHE.iterdir()):
         modification_time = file.stat().st_mtime
         age_seconds = time.time() - modification_time
         if age_seconds > expiry:
             logger.info(f'Removing cached file {file}; age is {age_seconds}s, expiry is {expiry}s')
-            os.remove(file)
-
-
-def worker_main(record: RecordItem, pbar_queue: queue.PriorityQueue[int]):
-    pbar_position: int = pbar_queue.get()
-    try:
-        if not os.path.exists(record.local_path):
-            utils.download_item(record, pbar_position)
-        write_files(record, PROJECT_FOLDER / 'lichess_standard_rated_headers', parse_pgn.parse_headers, pbar_position)
-        # Parsing moves with python-chess is painfully slow, ~90 kb/s
-        # write_files(record, DATALAKE / 'lichess_standard_rated_moves', parse_pgn.parse_moves)
-    finally:
-        pbar_queue.put(pbar_position)
+            file.unlink()
 
 
 def write_files(
         record: RecordItem, 
         path: pathlib.Path, 
-        parser: Callable[[io.TextIOBase], Iterable[Mapping]],
-        pbar_position: int, 
-        n: int = int(os.environ['ROWS_PER_PARQUET'])):
-    i = record.file_name.index('-')
-    year, month = record.file_name[i - 4:i + 3].split('-')
-    path = path / f'year={year}/month={month}'
+        parser: Callable[[io.TextIOBase], Iterable[Mapping]]):
+    j = record.file_name.index('-')
+    year, month = record.file_name[j - 4:j + 3].split('-')
+    suffix = f'year={year}/month={month}'
+    path = path / suffix
+    os.makedirs(path, exist_ok = True)
+    temp = CACHE
+    parquet_kwargs = {
+        'compression': 'zstd',
+        'mkdir': True
+    }
 
-    cleanup_stack, stream = record.stream(pbar_position)
+    def compact(df: pl.LazyFrame, suffix: str):
+        df = df.with_columns(ingest_timestamp = datetime.now())
+        df.sink_parquet(temp / suffix, **parquet_kwargs)
+        shutil.move(temp / suffix, path / suffix)
+
+    cleanup_stack, stream = utils.stream(record)
+    batches = itertools.batched(parser(stream), n = ROW_BUFFER_SIZE)
     with cleanup_stack:
-        for i, batch in enumerate(itertools.batched(parser(stream), n = n)):
-            df = pl.DataFrame(batch).with_columns(ingest_timestamp = datetime.now())
-            df.write_parquet(
-                file = path / f'{i:04d}.parquet',
-                compression = 'zstd',
-                mkdir = True)
-            logger.info(f'Wrote {len(df)} to {path / f"{i:04d}.parquet"}')
+        for i in itertools.count():
+            df = pl.LazyFrame()
+            size = 0
+
+            for j, batch in enumerate(batches):
+                file = temp / f'{j:04d}.parquet'
+                pl.DataFrame(batch).write_parquet(file, **parquet_kwargs)
+                df = pl.concat(
+                    [df, pl.scan_parquet(file)], 
+                    how = 'diagonal_relaxed')
+                logger.info(f'Wrote {len(batch)} to {path / f"{j:04d}.parquet"}')
+                size += file.stat().st_size
+                if size >= TARGET_FILE_SIZE_BYTES:
+                    break
+            else:
+                compact(df, f'{i:03d}.parquet')
+                break
+            compact(df, f'{i:03d}.parquet')
 
 
 if __name__ == '__main__':

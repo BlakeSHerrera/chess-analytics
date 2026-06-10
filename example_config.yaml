@@ -34,7 +34,7 @@ default_gateway: duckdb
 model_defaults:
   dialect: duckdb
   start: 2012-12-01  # Start date for backfill history
-  cron: '@daily'   # Run models daily at 12am UTC (can override per model)
+  cron: '@monthly'   # Run models monthly at 12am UTC (can override per model)
 
 
 # --- Variables ---

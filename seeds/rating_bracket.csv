@@ -1,0 +1,11 @@
+class,rating_min,rating_max
+Class F,0,999
+Class E,1000,1199
+Class D,1200,1399
+Class C,1400,1599
+Class B,1600,1799
+Class A,1800,1999
+Expert,2000,2199
+Master,2200,2399
+Grandmaster,2400,2599
+Super Grandmaster,2600,9999

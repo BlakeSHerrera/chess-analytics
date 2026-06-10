@@ -27,18 +27,20 @@ gateways:
 
 default_gateway: duckdb
 
+
 # --- Model Defaults ---
 # https://sqlmesh.readthedocs.io/en/stable/reference/model_configuration/#model-defaults
 
 model_defaults:
   dialect: duckdb
-  start: 2013-01-01  # Start date for backfill history
-  cron: '@monthly'   # Run models monthly at 12am UTC (can override per model)
+  start: 2012-12-01  # Start date for backfill history
+  cron: '@daily'   # Run models daily at 12am UTC (can override per model)
+
 
 # --- Variables ---
 
 variables:
-  datalake:  # Path to folder goes here
+  project_folder: {{ env_var('project_folder') }}
 
 # --- Linting Rules ---
 # Enforce standards for your team

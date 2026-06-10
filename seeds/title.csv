@@ -1,0 +1,26 @@
+title_short,title,organization,title_type,internal_rank
+GM,Grandmaster,FIDE,Open,1
+IM,International Master,FIDE,Open,2
+FM,FIDE Master,FIDE,Open,3
+CM,FIDE Candidate Master,FIDE,Open,4
+WGM,Woman Grandmaster,FIDE,Women's,1
+WIM,Woman International Master,FIDE,Women's,2
+WFM,Woman FIDE Master,FIDE,Women's,3
+WCM,Woman Candidate Master,FIDE,Women's,4
+AGM,Arena Grandmaster,FIDE,FIDE Online Arena,1
+AIM,Arena International Master,FIDE,FIDE Online Arena,2
+AFM,Arena FIDE Master,FIDE,FIDE Online Arena,3
+ACM,Arena FIDE Candidate Master,FIDE,FIDE Online Arena,4
+IA,International Arbiter,FIDE,Arbiter,1
+FA,FIDE Arbiter,FIDE,Arbiter,2
+FST,FIDE Senior Trainer,FIDE,Trainer,1
+FT,FIDE Trainer,FIDE,Trainer,2
+FI,FIDE Instructor,FIDE,Trainer,3
+NI,National Instructor,FIDE,Trainer,4
+DI,Developmental Instructor,FIDE,Trainer,5
+FIO,FIDE International Organizer,FIDE,Organizer,1
+SM,Senior Master,USCF,Open,1
+LM,Life Master,USCF,Open,2
+NM,National Master,USCF,Open,3
+CM,Candidate Master,USCF,Open,4
+BOT,Bot,N/A,N/A,0

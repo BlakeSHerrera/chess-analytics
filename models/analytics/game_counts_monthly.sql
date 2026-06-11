@@ -15,7 +15,10 @@ SELECT
     SUM(gf.game_format = 'Tournament') AS tournament_games,
     SUM(gf.game_format = 'Game') AS non_tournament_games,
     SUM(gf.game_format = 'Rated') AS rated_games,
-    SUM(gf.game_format = 'Casual') AS casual_games
+    SUM(gf.game_format = 'Casual') AS casual_games,
+    --Counts once for each player. Assume playtime is (base + inc) / 2. The two coefficients cancel.
+    SUM(gf.time_control_sum) / 60 AS est_playtime_hours,
+    24 * DAY(LAST_DAY(DATE_TRUNC('MONTH', g.utc_date))) AS hours_in_month
 FROM 
     integration.game g
     LEFT JOIN integration.game_format gf USING (game_format_key)

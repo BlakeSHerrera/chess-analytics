@@ -29,7 +29,10 @@ SELECT
     --Don't count abandoned games.
     SUM(gl.won::INT + gl.drew::INT / 2) 
         / SUM(gl.won::INT + gl.drew::INT + gl.lost::INT) 
-        AS avg_score
+        AS avg_score,
+    --Assume avg playtime in minutes is (base + inc) / 2
+    SUM(gf.time_control_sum) / 120 AS est_playtime_hours,
+    24 * DAY(LAST_DAY(DATE_TRUNC('MONTH', gl.utc_date))) AS hours_in_month
 FROM 
     integration.game_long gl
     LEFT JOIN integration.game_format gf USING (game_format_key)

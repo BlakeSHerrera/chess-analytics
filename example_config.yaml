@@ -33,14 +33,16 @@ default_gateway: duckdb
 
 model_defaults:
   dialect: duckdb
-  start: 2012-12-01  # Start date for backfill history
+  start: 2012-01-01  # Start date for backfill history
   cron: '@monthly'   # Run models monthly at 12am UTC (can override per model)
+  interval_unit: month
 
 
 # --- Variables ---
 
 variables:
   project_folder: {{ env_var('project_folder') }}
+  default_batch_size: 12
 
 # --- Linting Rules ---
 # Enforce standards for your team

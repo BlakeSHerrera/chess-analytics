@@ -1,7 +1,8 @@
 MODEL (
     NAME integration.game_format,
     KIND INCREMENTAL_BY_UNIQUE_KEY (
-        UNIQUE_KEY time_control),
+        UNIQUE_KEY game_format_key,
+        BATCH_SIZE @default_batch_size),
     GRAIN (time_control, event));
 
 SELECT

@@ -1,13 +1,14 @@
 MODEL (
     NAME prep.game,
     KIND INCREMENTAL_BY_TIME_RANGE (
-        TIME_COLUMN utc_date),
+        TIME_COLUMN utc_date,
+        BATCH_SIZE @default_batch_size),
     ALLOW_PARTIALS TRUE,
     GRAIN (site, game_id),
     TABLE_FORMAT 'hive',
     STORAGE_FORMAT 'parquet',
     PARTITIONED_BY (year, month),
-    CLUSTERED_BY (utc_date),
+    CLUSTERED_BY (utc_date, utc_time),
     COLUMN_DESCRIPTIONS (
         event = 'The event for the game, such as an individual game or tournament. Contains the rating format, game format, and time category.',
         site = 'The location or website where the game was played. For lichess games, this should always be lichess.org.',
@@ -27,7 +28,6 @@ MODEL (
         termination = 'Whether the game was decided by "Normal" game rules (checkmate, stalemate, resignation, agree to draw, threefold repetition, 50-move rule, insufficient material), "Time forfeit", or "Rules infraction".',
         black_title = 'The title for the Black player, if any. Bots have a title of "BOT".',
         white_title = 'The title for the White player, if any. Bots have a title of "BOT".',
-        ingest_timestamp = 'The date and time when this row was loaded into the database.',
         year = 'The year of the game (used in Hive partitioning).',
         month = 'The month of the game (used in Hive partitioning).'));
 
@@ -50,7 +50,6 @@ SELECT
     t.Termination AS termination,
     t.BlackTitle AS black_title,
     t.WhiteTitle AS white_title,
-    NOW() AS ingest_timestamp,
     t.year,
     t.month
 FROM READ_PARQUET(

@@ -1,9 +1,10 @@
 MODEL (
     NAME integration.player,
     KIND INCREMENTAL_BY_UNIQUE_KEY (
-        UNIQUE_KEY (player),
+        UNIQUE_KEY player,
         BATCH_SIZE @default_batch_size),
-    GRAIN player);
+    GRAIN player,
+    CLUSTERED_BY created_at);
 
 WITH players AS (
     SELECT

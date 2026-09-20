@@ -1,7 +1,8 @@
 services:
-  extract:
+
+  extract_lichess:
     build: .
-    command: python extract/extract.py
+    command: python extract/extract_lichess.py
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
@@ -14,6 +15,23 @@ services:
         limits:
           memory: 3G
         reservations: 
+          memory: 3G
+
+  extract_chesscom:
+    build: .
+    command: python extract/extract_chesscom.py
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    stdin_open: true
+    tty: True
+    volumes:
+      - chess_data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
           memory: 3G
 
 volumes:

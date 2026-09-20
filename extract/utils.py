@@ -13,14 +13,14 @@ import requests
 from tqdm import tqdm
 import zstandard
 
-from extract import RecordItem
+from extract_lichess import RecordItem
 
 
 BUFFER_SIZE_BYTES = int(os.environ['BUFFER_SIZE_KB']) * 2 ** 10
 
 
 @functools.wraps(requests.request)
-def request(*args, **kwargs):
+def request(*args, **kwargs) -> requests.Response:
     r = requests.request(*args, **kwargs)
     t = 1
     while r.status_code == 429:

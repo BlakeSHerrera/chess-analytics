@@ -1,10 +1,11 @@
 __pycache__
-.venv
-.env
-.vscode
 notes.md
 config.yaml
 logs
-.cache
 compose.ps1
 docker-compose.override.yaml
+data
+compose_*.ps1
+out.txt
+models_wip
+.*

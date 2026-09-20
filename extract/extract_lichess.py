@@ -1,5 +1,6 @@
 import dataclasses
 from datetime import datetime
+import functools
 import io
 import itertools
 import os
@@ -28,9 +29,9 @@ LOGS = PROJECT_FOLDER / 'logs'
 for i in (PROJECT_FOLDER, CACHE, LOGS, PROJECT_FOLDER / 'tmp'):
     os.makedirs(i, exist_ok = True)
 
-CREATE_TABLE, QUERY_FILE, UPSERT_FILE = (
-    pathlib.Path(f'extract/{i}.sql').read_text() for i in 
-        ['create_table', 'query_file', 'upsert_file'])
+@functools.cache
+def sql(file: str):
+    return pathlib.Path(f'extract/lichess/{file}.sql').read_text()
 
 TARGET_FILE_SIZE_BYTES = int(os.environ['TARGET_FILE_SIZE_MB']) * 2 ** 20
 ROW_BUFFER_SIZE = int(os.environ['ROW_BUFFER_SIZE'])
@@ -55,16 +56,11 @@ class RecordItem:
     def as_tuple(self) -> tuple[str]:
         return (self.url, self.file_name, self.status, self.checksum, str(self.local_path))
 
-    def mark_complete(self, conn: sqlite3.Connection):
-        self.status = 'complete'
-        conn.execute(UPSERT_FILE, self.as_tuple())
-        conn.commit()
-
 
 def main():
-    conn = sqlite3.connect(PROJECT_FOLDER / 'raw_metadata.sqlite')
-    conn.execute(CREATE_TABLE)
-    conn.commit()
+    conn = sqlite3.connect(PROJECT_FOLDER / 'raw_metadata.sqlite', autocommit = True)
+    conn.execute(sql('create_table'))
+    
     checksums_file = utils.request('GET', 'https://database.lichess.org/standard/sha256sums.txt').text.strip().split('\n')
     checksums = {file: checksum for checksum, file in map(str.split, checksums_file)}
     file_list = utils.request('GET', 'https://database.lichess.org/standard/list.txt').text.strip().split('\n')
@@ -72,7 +68,7 @@ def main():
     def should_download(file_name: str) -> bool:
         if os.environ['FILE_FILTER'] not in file_name:
             return False
-        db_records = conn.execute(QUERY_FILE, [file_name]).fetchall()
+        db_records = conn.execute(sql('query_file'), [file_name]).fetchall()
         if len(db_records) > 1:
             msg = 'Primary key violation in metadata table.'
             logger.exception(msg)
@@ -99,7 +95,8 @@ def main():
 
     for record in tqdm(todo):
         write_files(record, PROJECT_FOLDER / 'lichess_standard_rated_headers', parse_pgn.parse_headers)
-        record.mark_complete(conn)
+        record.status = 'complete'
+        conn.execute(sql('upsert_file'), record.as_tuple())
     
     if not todo:
         logger.info('Nothing to do!')
@@ -117,9 +114,10 @@ def clean_cache():
 
 
 def write_files(
-        record: RecordItem, 
-        path: pathlib.Path, 
-        parser: Callable[[io.TextIOBase], Iterable[Mapping]]):
+    record: RecordItem, 
+    path: pathlib.Path, 
+    parser: Callable[[io.TextIOBase], Iterable[Mapping]]
+):
     j = record.file_name.index('-')
     year, month = record.file_name[j - 4:j + 3].split('-')
     suffix = f'year={year}/month={month}'

@@ -10,6 +10,7 @@ import sqlite3
 
 import dotenv
 from loguru import logger
+import requests
 from tqdm import tqdm
 import zstandard
 
@@ -80,15 +81,22 @@ def main():
         disk.backup(conn)
     conn.executescript(sql('create_table'))
 
-    logger.info('Fetching TODO players.')
+    num_players = conn.execute(sql('count_todo_players')).fetchone()[0]
+    logger.info(s := f'{num_players} players to do.')
+    print(s)
     players = conn.execute(sql('query_todo_players')).fetchall()
     for (username,) in tqdm(players, desc = 'Fetch player archives'):
         get_player_archives(conn, username)
     
-    logger.info('Fetching TODO partitions.')
+    num_partitions = conn.execute(sql('count_todo_partitions')).fetchone()[0]
+    logger.info(s := f'{num_partitions} partitions to do.')
+    print(s)
     partitions = conn.execute(sql('query_todo_partitions')).fetchall()
     for username, year_month in tqdm(partitions, desc = 'Fetch player partitions'):
-        get_partition(conn, username, year_month)
+        try:
+            get_partition(conn, username, year_month)
+        except requests.exceptions.HTTPError:
+            pass
 
     conn.commit()
     temp_file = SQLITE_FILE.with_suffix('.tmp')

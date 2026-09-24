@@ -86,7 +86,10 @@ def main():
     print(s)
     players = conn.execute(sql('query_todo_players')).fetchall()
     for (username,) in tqdm(players, desc = 'Fetch player archives'):
-        get_player_archives(conn, username)
+        try:
+            get_player_archives(conn, username)
+        except requests.exceptions.HTTPError:
+            pass
     
     num_partitions = conn.execute(sql('count_todo_partitions')).fetchone()[0]
     logger.info(s := f'{num_partitions} partitions to do.')

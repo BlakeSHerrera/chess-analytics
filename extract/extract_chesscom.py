@@ -7,6 +7,7 @@ import os
 import pathlib
 import shutil
 import sqlite3
+import sys
 
 import dotenv
 from loguru import logger
@@ -39,6 +40,7 @@ logger.add(
     level = os.environ['LOG_LEVEL'], 
     rotation = os.environ['LOG_ROTATION'], 
     enqueue = True)
+logger.add(sys.stdout, level = 'INFO')
 
 
 @dataclasses.dataclass
@@ -74,33 +76,43 @@ def sql(file: str):
 def get(url: str) -> dict:
     return utils.request('GET', url, headers = HEADERS).json()
 
+def format_counts(counts: dict[str, int]):
+    todo = counts['todo']
+    done = counts['done']
+    total = todo + done
+    return f'{todo} todo ({todo / total * 100:0.2f}%). ' \
+        f'{done} done ({done / total * 100:0.2f}%). '\
+        f'{total} total.'
+
 
 def main():
+    logger.info('Loading database into memory.')
     conn = sqlite3.connect(':memory:')
     with sqlite3.connect(SQLITE_FILE) as disk:
         disk.backup(conn)
     conn.executescript(sql('create_table'))
 
-    num_players = conn.execute(sql('count_todo_players')).fetchone()[0]
-    logger.info(s := f'{num_players} players to do.')
-    print(s)
+    logger.info('Counting players.')
+    counts = dict(conn.execute(sql('count_players')).fetchall())
+    logger.info(format_counts(counts))
     players = conn.execute(sql('query_todo_players')).fetchall()
     for (username,) in tqdm(players, desc = 'Fetch player archives'):
         try:
             get_player_archives(conn, username)
-        except requests.exceptions.HTTPError:
-            pass
-    
-    num_partitions = conn.execute(sql('count_todo_partitions')).fetchone()[0]
-    logger.info(s := f'{num_partitions} partitions to do.')
-    print(s)
+        except requests.exceptions.HTTPError as e:
+            logger.error(f'Error fetching archive for {username}: {e}')
+
+    logger.info('Counting partitions')
+    counts = dict(conn.execute(sql('count_partitions')).fetchall())
+    logger.info(format_counts(counts))
     partitions = conn.execute(sql('query_todo_partitions')).fetchall()
     for username, year_month in tqdm(partitions, desc = 'Fetch player partitions'):
         try:
             get_partition(conn, username, year_month)
-        except requests.exceptions.HTTPError:
-            pass
+        except requests.exceptions.HTTPError as e:
+            logger.error(f'Error fetching partition for {username}/{year_month[:7]}: {e}')
 
+    logger.debug('Committing changes to disk.')
     conn.commit()
     temp_file = SQLITE_FILE.with_suffix('.tmp')
     with sqlite3.connect(temp_file) as disk:
@@ -108,32 +120,30 @@ def main():
     os.replace(temp_file, SQLITE_FILE)
 
 
-@utils.excepts(requests.exceptions.HTTPError)
 def get_player_archives(conn: sqlite3.Connection, username: str):
-    logger.info(f'Fetching archives for {username}.')
+    logger.debug(f'Fetching archives for {username}.')
     data = get(f'https://api.chess.com/pub/player/{username}/games/archives')['archives']
-    logger.info(f'Processing {len(data)} archives.')
+    logger.debug(f'Processing {len(data)} archives.')
     max_date = datetime(2000, 1, 1)
     url: str
     for url in data:
         year, month = map(int, url.split('/')[-2:])
         d = datetime(year, month, 1)
         max_date = max(d, max_date)
-        logger.info(f'Adding partition {username}/{year}-{month:02d}')
+        logger.debug(f'Adding partition {username}/{year}-{month:02d}')
         conn.execute(sql('add_partition'), (username, d.isoformat()))
-    logger.info('Updating metadata.')
+    logger.debug('Updating metadata.')
     conn.execute(
         sql('update_player_metadata'), 
         (username, max_date.isoformat(), datetime.now().isoformat()))
 
 
-@utils.excepts(requests.exceptions.HTTPError)
 def get_partition(conn: sqlite3.Connection, username: str, year_month: str):
     record = RecordItem(username, datetime.fromisoformat(year_month))
-    logger.info(f'Fetching partition {username}/{record.ym()}')
+    logger.debug(f'Fetching partition {username}/{record.ym()}')
     raw = get(f'https://api.chess.com/pub/player/{record.username}/games/{record.ym("/")}')
 
-    logger.info(f'Processing {len(raw["games"])} games.')
+    logger.debug(f'Processing {len(raw["games"])} games.')
     for game in raw['games']:
         end_time = datetime.fromtimestamp(game['end_time'])
         for color in 'white', 'black':
@@ -141,14 +151,14 @@ def get_partition(conn: sqlite3.Connection, username: str, year_month: str):
                 sql('update_player_metadata'), 
                 (game[color]['username'], end_time.isoformat(), None))
 
-    logger.info('Writing data.')
+    logger.debug('Writing data.')
     data = compressor.compress(json.dumps(raw).encode('utf-8'))
     temp = record.file_name.with_suffix('.tmp')
     os.makedirs(str(temp.parent), exist_ok = True)
     temp.write_bytes(data)
     shutil.move(str(temp), str(record.file_name))
 
-    logger.info('Marking complete.')
+    logger.debug('Marking complete.')
     record.checksum = hashlib.md5(data).hexdigest()
     record.size_bytes = len(data)
     record.completed_on = datetime.now()

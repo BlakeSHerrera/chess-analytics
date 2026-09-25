@@ -10,6 +10,7 @@ import time
 
 from loguru import logger
 import requests
+import toolz
 from tqdm import tqdm
 import zstandard
 
@@ -17,7 +18,7 @@ from extract_lichess import RecordItem
 
 
 BUFFER_SIZE_BYTES = int(os.environ['BUFFER_SIZE_KB']) * 2 ** 10
-
+excepts = toolz.curry(toolz.excepts)
 
 @functools.wraps(requests.request)
 def request(*args, **kwargs) -> requests.Response:

@@ -108,6 +108,7 @@ def main():
     os.replace(temp_file, SQLITE_FILE)
 
 
+@utils.excepts(requests.exceptions.HTTPError)
 def get_player_archives(conn: sqlite3.Connection, username: str):
     logger.info(f'Fetching archives for {username}.')
     data = get(f'https://api.chess.com/pub/player/{username}/games/archives')['archives']
@@ -126,6 +127,7 @@ def get_player_archives(conn: sqlite3.Connection, username: str):
         (username, max_date.isoformat(), datetime.now().isoformat()))
 
 
+@utils.excepts(requests.exceptions.HTTPError)
 def get_partition(conn: sqlite3.Connection, username: str, year_month: str):
     record = RecordItem(username, datetime.fromisoformat(year_month))
     logger.info(f'Fetching partition {username}/{record.ym()}')

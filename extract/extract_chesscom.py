@@ -80,44 +80,36 @@ def format_counts(counts: dict[str, int]):
     todo = counts['todo']
     done = counts['done']
     total = todo + done
-    return f'{todo} todo ({todo / total * 100:0.2f}%). ' \
-        f'{done} done ({done / total * 100:0.2f}%). '\
+    return f'{todo} todo ({todo / total:.2%}). ' \
+        f'{done} done ({done / total:.2%}). ' \
         f'{total} total.'
 
 
 def main():
-    logger.info('Loading database into memory.')
-    conn = sqlite3.connect(':memory:')
-    with sqlite3.connect(SQLITE_FILE) as disk:
-        disk.backup(conn)
-    conn.executescript(sql('create_table'))
+    with sqlite3.connect(SQLITE_FILE) as conn:
+        conn.executescript(sql('initialize'))
 
-    logger.info('Counting players.')
-    counts = dict(conn.execute(sql('count_players')).fetchall())
-    logger.info(format_counts(counts))
-    players = conn.execute(sql('query_todo_players')).fetchall()
-    for (username,) in tqdm(players, desc = 'Fetch player archives'):
-        try:
-            get_player_archives(conn, username)
-        except requests.exceptions.HTTPError as e:
-            logger.error(f'Error fetching archive for {username}: {e}')
+        logger.info('Counting players.')
+        counts = dict(conn.execute(sql('count_players')).fetchall())
+        logger.info(format_counts(counts))
+        players = conn.execute(sql('query_todo_players')).fetchall()
+        for (username,) in tqdm(players, desc = 'Fetch player archives'):
+            try:
+                get_player_archives(conn, username)
+            except (requests.exceptions.HTTPError, requests.exceptions.SSLError) as e:
+                logger.error(f'Error fetching archive for {username}: {e}')
 
-    logger.info('Counting partitions')
-    counts = dict(conn.execute(sql('count_partitions')).fetchall())
-    logger.info(format_counts(counts))
-    partitions = conn.execute(sql('query_todo_partitions')).fetchall()
-    for username, year_month in tqdm(partitions, desc = 'Fetch player partitions'):
-        try:
-            get_partition(conn, username, year_month)
-        except requests.exceptions.HTTPError as e:
-            logger.error(f'Error fetching partition for {username}/{year_month[:7]}: {e}')
+        logger.info('Counting partitions')
+        counts = dict(conn.execute(sql('count_partitions')).fetchall())
+        logger.info(format_counts(counts))
+        partitions = conn.execute(sql('query_todo_partitions')).fetchall()
+        for username, year_month in tqdm(partitions, desc = 'Fetch player partitions'):
+            try:
+                get_partition(conn, username, year_month)
+            except (requests.exceptions.HTTPError, requests.exceptions.SSLError) as e:
+                logger.error(f'Error fetching partition for {username}/{year_month[:7]}: {e}')
 
-    logger.debug('Committing changes to disk.')
-    conn.commit()
-    temp_file = SQLITE_FILE.with_suffix('.tmp')
-    with sqlite3.connect(temp_file) as disk:
-        conn.backup(disk)
-    os.replace(temp_file, SQLITE_FILE)
+        logger.debug('Committing changes to disk.')
 
 
 def get_player_archives(conn: sqlite3.Connection, username: str):

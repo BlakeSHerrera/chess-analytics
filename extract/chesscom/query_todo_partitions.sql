@@ -4,4 +4,4 @@ SELECT
 FROM chesscom_raw_metadata
 WHERE completed_on IS NULL
 ORDER BY year_month
-LIMIT 10000;
+LIMIT 1000;

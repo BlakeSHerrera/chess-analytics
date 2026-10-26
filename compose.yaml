@@ -1,0 +1,40 @@
+services:
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: dagster
+      POSTGRES_DB: chess_analytics
+      PGDATA: /data/postgres
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dagster -d chess_analytics']
+      interval: 1s
+      timeout: 1s
+      retries: 3
+      start_period: 1s
+    volumes:
+      - postgres_data:/data
+  
+  dagster-daemon: &dg
+    build: .
+    entrypoint: ['dagster-daemon', 'run', '-w', '/app/dagster/workspace.yaml']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DAGSTER_HOME: /app/dagster
+      ROW_BUFFER_SIZE: 500000  # 500k
+      TARGET_FILE_SIZE_MB: 100
+    volumes:
+      - data:/data
+  
+  dagster-webserver:
+    <<: *dg
+    entrypoint: ['dagster-webserver', '-h', '0.0.0.0', '-p', '3000', '-w', '/app/dagster/workspace.yaml']
+    ports:
+      - '3000:3000'
+
+volumes:
+  data:
+  postgres_data:

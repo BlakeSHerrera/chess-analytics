@@ -12,13 +12,15 @@ def parse_headers(stream: io.TextIOBase) -> Iterable[chess.pgn.Headers]:
             i = line.index(' ')
             tags[line[1:i]] = line[i + 2:-2]
         else:
-            pgn = next(stream).strip()
-            # tags['PGN'] = pgn
+            pgn = next(stream)
+            # tags['PGN'] = pgn.strip()
+            for tag in ['eval', 'clk', 'clkc']:
+                tags[f'has_{tag}'] = f'[%{tag} ' in pgn
             next(stream)
             yield tags
             tags = dict()
 
-    # python-chess is 4x slower:
+    # python-chess is 4x slower; also no has_x tags:
     # while game := chess.pgn.read_headers(stream):
     #     yield game
 

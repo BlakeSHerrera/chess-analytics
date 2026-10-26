@@ -1,0 +1,5 @@
+load_from:
+  - python_file:
+      relative_path: definitions.py
+      working_directory: /app/src/dagster
+      location_name: default

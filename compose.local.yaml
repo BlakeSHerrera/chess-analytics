@@ -1,5 +1,5 @@
 volumes:
-  chess_data:
+  data:
     driver: local
     driver_opts:
       type: none

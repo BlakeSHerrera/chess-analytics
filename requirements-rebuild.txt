@@ -1,0 +1,12 @@
+dagster
+python-dotenv
+polars
+zstandard
+pyarrow
+fastparquet
+python-chess
+dagster-webserver
+dagster-postgres
+sqlmesh
+duckdb
+psycopg2-binary

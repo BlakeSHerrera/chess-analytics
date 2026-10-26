@@ -1,0 +1,30 @@
+storage:
+  postgres:
+    postgres_db:
+      scheme: postgresql+psycopg2
+      hostname: postgres
+      username: dagster
+      password: dagster
+      db_name: chess_analytics
+      port: 5432
+
+compute_logs:
+  module: dagster._core.storage.local_compute_log_manager
+  class: LocalComputeLogManager
+  config:
+    base_dir: /data/dagster
+
+run_launcher:
+  module: dagster.core.launcher
+  class: DefaultRunLauncher
+
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+
+concurrency:
+  runs:
+    max_concurrent_runs: 1
+
+telemetry:
+  enabled: false

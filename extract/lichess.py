@@ -49,6 +49,8 @@ PARTITION_SEPARATOR = '|'
 def lichess_games_raw(context: dg.AssetExecutionContext):
     variant, year_month = context.partition_key.split(PARTITION_SEPARATOR)
     url = DOWNLOAD_URL.format(variant = variant, year_month = year_month)
+    if variant == 'broadcast':
+        url = url.replace('_rated', '')
     path = DATA / 'raw' / 'lichess' / variant
     file = path / posixpath.basename(urllib.parse.urlparse(url).path)
     

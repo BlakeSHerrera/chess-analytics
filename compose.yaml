@@ -14,11 +14,14 @@ services:
       retries: 3
       start_period: 1s
     volumes:
-      - postgres_data:/data
+      - chess_data:/data/postgres
   
   dagster-daemon: &dg
     build: .
-    entrypoint: ['dagster-daemon', 'run', '-w', '/app/dagster/workspace.yaml']
+    entrypoint: [
+      'dagster-daemon', 'run', 
+      '-w', '/app/dagster/workspace.yaml'
+    ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,14 +30,18 @@ services:
       ROW_BUFFER_SIZE: 500000  # 500k
       TARGET_FILE_SIZE_MB: 100
     volumes:
-      - data:/data
+      - chess_data:/data
   
   dagster-webserver:
     <<: *dg
-    entrypoint: ['dagster-webserver', '-h', '0.0.0.0', '-p', '3000', '-w', '/app/dagster/workspace.yaml']
+    entrypoint: [
+      'dagster-webserver', 
+      '-h', '0.0.0.0', 
+      '-p', '3000', 
+      '-w', '/app/dagster/workspace.yaml'
+    ]
     ports:
       - '3000:3000'
 
 volumes:
-  data:
-  postgres_data:
+  chess_data:

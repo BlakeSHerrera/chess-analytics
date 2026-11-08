@@ -1,5 +1,5 @@
 volumes:
-  data:
+  chess_data:
     driver: local
     driver_opts:
       type: cifs

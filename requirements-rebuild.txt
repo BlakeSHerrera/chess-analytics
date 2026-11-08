@@ -10,3 +10,4 @@ dagster-postgres
 sqlmesh
 duckdb
 psycopg2-binary
+requests-cache

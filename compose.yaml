@@ -45,3 +45,4 @@ services:
 
 volumes:
   chess_data:
+    external: true

@@ -14,7 +14,7 @@ services:
       retries: 3
       start_period: 1s
     volumes:
-      - chess_data:/data/postgres
+      - chess_data:/data:z
     stdin_open: true
     tty: true
   
@@ -46,6 +46,13 @@ services:
     ]
     ports:
       - '3000:3000'
+  
+  python-debug:
+    image: python:3.13-slim
+    volumes:
+      - chess_data:/data
+    stdin_open: true
+    tty: true
 
 volumes:
   chess_data:

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import functools
 import hashlib
+import io
 import itertools
 import logging
 import os
@@ -82,14 +83,15 @@ def get_checksum(file: pathlib.Path):
         return hashlib.file_digest(fp, hashlib.sha256, _bufsize = 2 ** 22).hexdigest()
 
     
-@dg.asset(partitions_def = lichess_games_partitions)
+@dg.asset(
+    partitions_def = lichess_games_partitions,
+    code_version = '1')
 def lichess_games_raw(context: dg.AssetExecutionContext):
     variant, year_month = context.partition_key.split(PARTITION_SEPARATOR)
     url, file = get_url_and_path(variant, year_month)
     os.makedirs(file.parent, exist_ok = True)
-    expected = get_expected_checksum(variant, year_month)
     logging.info(f'Found file? {(e := file.exists())}')
-    if not e or get_checksum(file) != expected:
+    if not e:
         with utils.request('GET', url, stream = True) as r, \
             open(file, 'wb') as fp:
             shutil.copyfileobj(r.raw, fp)
@@ -115,17 +117,20 @@ def verify_lichess_checksum(context: dg.AssetCheckExecutionContext):
 
 @dg.asset(
     partitions_def = lichess_games_partitions,
-    # check_specs = [dg.AssetCheckSpec(name = 'verify_lichess_checksum', asset = lichess_games_raw)],
-    ins = {'file': dg.AssetIn('lichess_games_raw')})
-def staged_games(context: dg.AssetExecutionContext, file: pathlib.Path):
+    deps = [lichess_games_raw],
+    code_version = '1')
+def staged_games(context: dg.AssetExecutionContext):
     variant, year_month = context.partition_key.split(PARTITION_SEPARATOR)
-    year, month = year_month.split('-')
+    _, file = get_url_and_path(variant, year_month)
+    year, month = map(int, year_month.split('-'))
     path = DATA / 'stage' / 'lichess' / 'headers' / f'variant={variant}' / f'year={year}' / f'month={month}'
-    os.mkdir(path, exist_ok = True)
+    os.makedirs(path, exist_ok = True)
 
-    with open(file, 'rb') as fp:
+    with open(file, 'rb') as fp, \
+         zstandard.ZstdDecompressor().stream_reader(fp) as reader:
         batches = itertools.batched(
-            parse_pgn.parse_headers(zstandard.ZstdDecompressor().stream_reader(fp)), 
+            parse_pgn.parse_headers(
+                io.TextIOWrapper(reader, encoding = 'utf-8')), 
             n = ROW_BUFFER_SIZE)
         for i in itertools.count(0):
             size = 0

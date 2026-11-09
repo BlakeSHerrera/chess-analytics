@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import functools
 import hashlib
 import itertools
+import logging
 import os
 import pathlib
 import posixpath
@@ -87,7 +88,8 @@ def lichess_games_raw(context: dg.AssetExecutionContext):
     url, file = get_url_and_path(variant, year_month)
     os.makedirs(file.parent, exist_ok = True)
     expected = get_expected_checksum(variant, year_month)
-    if not file.exists() or get_checksum(file) != expected:
+    logging.info(f'Found file? {(e := file.exists())}')
+    if not e or get_checksum(file) != expected:
         with utils.request('GET', url, stream = True) as r, \
             open(file, 'wb') as fp:
             shutil.copyfileobj(r.raw, fp)

@@ -113,35 +113,6 @@ def verify_lichess_checksum(context: dg.AssetCheckExecutionContext):
         })
 
 
-lichess_job = dg.define_asset_job(
-    'lichess_job', 
-    selection = [lichess_games_raw])
-
-
-@dg.sensor(
-    job = lichess_job,
-    minimum_interval_seconds = round(timedelta(days = 7).total_seconds()),
-    default_status = dg.DefaultSensorStatus.RUNNING)
-def partition_sensor(context: dg.SensorEvaluationContext):
-    partitions = set()
-    for variant in VARIANTS:
-        file_list = utils.request('GET', LIST_URL.format(variant = variant)).text.strip().split('\n')
-        partitions |= {variant + PARTITION_SEPARATOR + url[-15:-8] for url in file_list}
-        
-    new_partitions = list(partitions - set(context.instance.get_dynamic_partitions('lichess_months')))
-    if not new_partitions:
-        return dg.SensorResult()
-    return dg.SensorResult(
-        run_requests = [
-            dg.RunRequest(
-                partition_key = key,
-                # Older partitions run first.
-                tags = {'dagster/priority': '-' + key[key.index(PARTITION_SEPARATOR) + 1:].replace('-', '')}) 
-            for key in new_partitions
-        ],
-        dynamic_partitions_requests = [lichess_games_partitions.build_add_request(new_partitions)])
-
-
 @dg.asset(
     partitions_def = lichess_games_partitions,
     # check_specs = [dg.AssetCheckSpec(name = 'verify_lichess_checksum', asset = lichess_games_raw)],
@@ -180,3 +151,34 @@ def staged_games(context: dg.AssetExecutionContext, file: pathlib.Path):
             'file_count': i + 1,
             'size_bytes': sum(file.stat().st_size for file in path.glob('*.parquet')),
         })
+
+
+lichess_job = dg.define_asset_job(
+    'lichess_job', 
+    selection = [lichess_games_raw, staged_games])
+
+
+@dg.sensor(
+    job = lichess_job,
+    minimum_interval_seconds = round(timedelta(days = 7).total_seconds()),
+    default_status = dg.DefaultSensorStatus.RUNNING)
+def partition_sensor(context: dg.SensorEvaluationContext):
+    partitions = set()
+    for variant in VARIANTS:
+        file_list = utils.request('GET', LIST_URL.format(variant = variant)).text.strip().split('\n')
+        partitions |= {variant + PARTITION_SEPARATOR + url[-15:-8] for url in file_list}
+        
+    new_partitions = list(partitions - set(context.instance.get_dynamic_partitions('lichess_months')))
+    if not new_partitions:
+        return dg.SensorResult()
+    return dg.SensorResult(
+        run_requests = [
+            dg.RunRequest(
+                partition_key = key,
+                # Older partitions run first.
+                tags = {'dagster/priority': '-' + key[key.index(PARTITION_SEPARATOR) + 1:].replace('-', '')}) 
+            for key in new_partitions
+        ],
+        dynamic_partitions_requests = [lichess_games_partitions.build_add_request(new_partitions)])
+
+

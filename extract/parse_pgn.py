@@ -11,14 +11,18 @@ def parse_headers(stream: io.TextIOBase) -> Iterable[chess.pgn.Headers]:
         if line:
             i = line.index(' ')
             tags[line[1:i]] = line[i + 2:-2]
-        else:
+            continue
+        try:
+            # Sometimes the pgn ends with 4 blank lines instead of 3
             pgn = next(stream)
-            # tags['PGN'] = pgn.strip()
-            for tag in ['eval', 'clk', 'clkc']:
-                tags[f'has_{tag}'] = f'[%{tag} ' in pgn
-            next(stream)
-            yield tags
-            tags = dict()
+        except StopIteration:
+            return
+        # tags['PGN'] = pgn.strip()
+        for tag in ['eval', 'clk', 'clkc']:
+            tags[f'has_{tag}'] = f'[%{tag} ' in pgn
+        next(stream)
+        yield tags
+        tags = dict()
 
     # python-chess is 4x slower; also no has_x tags:
     # while game := chess.pgn.read_headers(stream):

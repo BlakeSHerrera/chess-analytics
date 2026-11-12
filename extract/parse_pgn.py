@@ -20,8 +20,12 @@ def parse_headers(stream: io.TextIOBase) -> Iterable[chess.pgn.Headers]:
         # tags['PGN'] = pgn.strip()
         for tag in ['eval', 'clk', 'clkc']:
             tags[f'has_{tag}'] = f'[%{tag} ' in pgn
-        next(stream)
-        yield tags
+        try:
+            next(stream)
+        except StopIteration:
+            return
+        finally:
+            yield tags
         tags = dict()
 
     # python-chess is 4x slower; also no has_x tags:

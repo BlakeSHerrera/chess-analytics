@@ -173,7 +173,7 @@ def partition_sensor(context: dg.SensorEvaluationContext):
         file_list = utils.request('GET', LIST_URL.format(variant = variant)).text.strip().split('\n')
         partitions |= {variant + PARTITION_SEPARATOR + url[-15:-8] for url in file_list}
         
-    new_partitions = list(partitions - set(context.instance.get_dynamic_partitions('lichess_months')))
+    new_partitions = list(partitions - set(context.instance.get_dynamic_partitions('lichess_games_partitions')))
     if not new_partitions:
         return dg.SensorResult()
     return dg.SensorResult(

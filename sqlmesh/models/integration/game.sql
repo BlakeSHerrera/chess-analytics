@@ -14,7 +14,7 @@ SELECT
     t.variant,
     t.year,
     t.month,
-    @GENERATE_SURROGATE_KEY(t.time_control, t.event) AS game_format_key,
+    @GENERATE_SURROGATE_KEY(t.variant, t.time_control, t.event) AS game_format_key,
     t.game_id,
     @GENERATE_SURROGATE_KEY(t.white) AS player_key_white,
     @GENERATE_SURROGATE_KEY(t.black) AS player_key_black,
@@ -23,12 +23,12 @@ SELECT
     t.utc_datetime,
     t.utc_date,  -- There is also a "Date" field?
     t.utc_time,
-    t.white_elo,
-    t.black_elo,
+    t.white_rating,
+    t.black_rating,
     t.white_rating_diff,
     t.black_rating_diff,
     @GENERATE_SURROGATE_KEY(t.white_title) AS title_key_white,
     @GENERATE_SURROGATE_KEY(t.black_title) AS title_key_black,
-    
+    t.is_analyzed
 FROM prep.game t
 WHERE t.utc_date BETWEEN @start_date AND @end_date;

@@ -3,7 +3,8 @@ MODEL (
     KIND INCREMENTAL_BY_TIME_RANGE (
         TIME_COLUMN utc_datetime,
         BATCH_SIZE 1),
-    GRAIN (variant, year, month, site, game_id),  --There are some duplicates across year/month noted on lichess
+    --There are some duplicates across year/month noted on lichess
+    -- GRAIN (variant, year, month, site, game_id),
     TABLE_FORMAT 'hive',
     STORAGE_FORMAT 'parquet',
     PARTITIONED_BY (variant, year, month),
@@ -22,8 +23,9 @@ SELECT
     REPLACE(t.UTCDate, '.', '-')::DATE + t.UTCTime::TIME AS utc_datetime,
     REPLACE(t.UTCDate, '.', '-')::DATE AS utc_date,  -- There is also a "Date" field?
     t.UTCTime::TIME AS utc_time,
-    NULLIF(t.WhiteElo, '?')::INT AS white_elo,
-    NULLIF(t.BlackElo, '?')::INT AS black_elo,
+    --Lichess uses Glicko2, not Elo, despite the name.
+    NULLIF(t.WhiteElo, '?')::INT AS white_rating,
+    NULLIF(t.BlackElo, '?')::INT AS black_rating,
     t.WhiteRatingDiff::INT AS white_rating_diff,
     t.BlackRatingDiff::INT AS black_rating_diff,
     t.ECO AS eco_code,
@@ -32,6 +34,9 @@ SELECT
     t.Termination AS termination,
     t.BlackTitle AS black_title,
     t.WhiteTitle AS white_title,
+    t.has_eval AS is_analyzed,
+    t.has_clk AS has_clk,
+    t.has_clkc AS has_clkc,
     --For broadcasts
     t.BlackFideID AS black_fide_id,
     t.WhiteFideID AS white_fide_id,
@@ -47,7 +52,11 @@ FROM READ_PARQUET(
     @project_folder || '/stage/lichess/headers/**/*.parquet',
     HIVE_PARTITIONING = TRUE,
     UNION_BY_NAME = TRUE,
-    HIVE_TYPES = {'variant': VARCHAR, 'year': INTEGER, 'month': INTEGER}) 
+    HIVE_TYPES = {
+        'variant': VARCHAR, 
+        'year': INTEGER, 
+        'month': INTEGER
+    }) 
     AS t
 WHERE 
     MAKE_DATE(t.year, t.month, 1) BETWEEN DATE_TRUNC('month', @start_date) AND DATE_TRUNC('month', @end_date)

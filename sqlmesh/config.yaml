@@ -47,4 +47,3 @@ linter:
   rules:
     - ambiguousorinvalidcolumn
     - invalidselectstarexpansion
-    - noambiguousprojections

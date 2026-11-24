@@ -1,6 +1,6 @@
 MODEL (
     NAME integration.title,
-    KIND FULL);
+    KIND VIEW);
 
 SELECT
     @GENERATE_SURROGATE_KEY(title) AS title_key,

@@ -2,7 +2,7 @@ MODEL (
     NAME integration.result,
     KIND INCREMENTAL_BY_UNIQUE_KEY (
         UNIQUE_KEY (result_key),
-        BATCH_SIZE @default_batch_size),
+        BATCH_SIZE 1),
     GRAIN (result, termination));
 
 SELECT DISTINCT
@@ -11,4 +11,6 @@ SELECT DISTINCT
     t.result IN ('1-0', '1/2-1/2', '0-1') AS game_completed,
     t.termination
 FROM prep.game t
-WHERE t.utc_date BETWEEN @start_date AND @end_date;
+WHERE 
+    MAKE_DATE(t.year, t.month, 1) BETWEEN DATE_TRUNC('month', @start_date) AND DATE_TRUNC('month', @end_date)
+    AND t.utc_date BETWEEN @start_date AND @end_date;

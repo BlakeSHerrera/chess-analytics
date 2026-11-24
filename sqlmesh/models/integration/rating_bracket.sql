@@ -1,6 +1,6 @@
 MODEL (
     NAME integration.rating_bracket,
-    KIND FULL,
+    KIND VIEW,
     GRAIN class);
 
 SELECT

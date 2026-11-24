@@ -1,43 +1,25 @@
 MODEL (
     NAME prep.game,
     KIND INCREMENTAL_BY_TIME_RANGE (
-        TIME_COLUMN utc_date,
-        BATCH_SIZE @default_batch_size),
-    ALLOW_PARTIALS TRUE,
-    GRAIN (site, game_id),
+        TIME_COLUMN utc_datetime,
+        BATCH_SIZE 1),
+    GRAIN (variant, year, month, site, game_id),  --There are some duplicates across year/month noted on lichess
     TABLE_FORMAT 'hive',
     STORAGE_FORMAT 'parquet',
-    PARTITIONED_BY (year, month),
-    CLUSTERED_BY (utc_date, utc_time),
-    COLUMN_DESCRIPTIONS (
-        event = 'The event for the game, such as an individual game or tournament. Contains the rating format, game format, and time category.',
-        site = 'The location or website where the game was played. For lichess games, this should always be lichess.org.',
-        game_id = 'Along with the site, this forms a unique identifier for the game.',
-        white = 'The name or username of the player with the white pieces.',
-        black = 'The name or username of the player with the black pieces.',
-        result = 'The outcome of the game. 1-0 is a win for White, 0-1 is a win for Black, 1/2-1/2 is a draw, and * indicates the game was terminated before it began.',
-        utc_date = 'The Universal Coordinated Time (UTC) date when the game began.',
-        utc_time = 'The Universal Coordinated Time (UTC) time when the game began.',
-        white_elo = 'The Elo rating of White. Note that players begin unrated, indicated by a NULL value.',
-        black_elo = 'The Elo rating of Black. Note that players begin unrated, indicated by a NULL value.',
-        white_rating_diff = 'The number of Elo rating points White gained or lost from this match. A larger Elo diff means more points are at stake for an upset.',
-        black_rating_diff = 'The number of Elo rating points Black gained or lost from this match. A larger Elo diff means more points are at stake for an upset.',
-        eco_code = 'Code from the Encyclopedia of Chess Openings, beginning with a letter and followed by a two-digit numeric code.',
-        opening = 'The opening of the game. Not that any one opening is a branching path of multiple openings; this reflects the final leaf node. Openings are also not strictly hierarchical and can transposition. An opening name is also not unique to a one position.',
-        time_control = 'The time control of the game, formatted as initial+incrmental for lichess. Correspondence games have a time control measured in days per move, so this field is blank for such games.',
-        termination = 'Whether the game was decided by "Normal" game rules (checkmate, stalemate, resignation, agree to draw, threefold repetition, 50-move rule, insufficient material), "Time forfeit", or "Rules infraction".',
-        black_title = 'The title for the Black player, if any. Bots have a title of "BOT".',
-        white_title = 'The title for the White player, if any. Bots have a title of "BOT".',
-        year = 'The year of the game (used in Hive partitioning).',
-        month = 'The month of the game (used in Hive partitioning).'));
+    PARTITIONED_BY (variant, year, month),
+    CLUSTERED_BY (utc_datetime));
 
 SELECT 
+    t.variant AS variant,
+    t.year,
+    t.month,
     t.Event AS event,
-    FILTER(['lichess.org'], s -> s IN t.Site)[1] AS site,
+    FILTER(['lichess.org'], lambda s: s IN t.Site)[1] AS site,
     REPLACE(t.Site, 'https://lichess.org/', '') AS game_id,
     t.White AS white,
     t.Black AS black,
     t.Result AS result,
+    REPLACE(t.UTCDate, '.', '-')::DATE + t.UTCTime::TIME AS utc_datetime,
     REPLACE(t.UTCDate, '.', '-')::DATE AS utc_date,  -- There is also a "Date" field?
     t.UTCTime::TIME AS utc_time,
     NULLIF(t.WhiteElo, '?')::INT AS white_elo,
@@ -50,11 +32,23 @@ SELECT
     t.Termination AS termination,
     t.BlackTitle AS black_title,
     t.WhiteTitle AS white_title,
-    t.year,
-    t.month
+    --For broadcasts
+    t.BlackFideID AS black_fide_id,
+    t.WhiteFideID AS white_fide_id,
+    t.StudyName AS study_name,
+    t.ChapterName AS chapter_name,
+    t.BroadcastName AS broadcast_name,
+    t.BroadcastURL AS broadcast_url,
+    t.GameURL AS game_url,
+    --Chess960
+    COALESCE(t.SetUp, '0')::BOOLEAN AS set_up,
+    COALESCE(t.FEN, 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1') AS fen
 FROM READ_PARQUET(
-    @project_folder || '/lichess_standard_rated_headers/**/*.parquet', 
+    @project_folder || '/stage/lichess/headers/**/*.parquet',
     HIVE_PARTITIONING = TRUE,
-    UNION_BY_NAME = TRUE) 
+    UNION_BY_NAME = TRUE,
+    HIVE_TYPES = {'variant': VARCHAR, 'year': INTEGER, 'month': INTEGER}) 
     AS t
-WHERE REPLACE(t.UTCDate, '.', '-')::DATE BETWEEN @start_date AND @end_date;
+WHERE 
+    MAKE_DATE(t.year, t.month, 1) BETWEEN DATE_TRUNC('month', @start_date) AND DATE_TRUNC('month', @end_date)
+    AND t.UTCDate BETWEEN STRFTIME(@start_date, '%Y.%m.%d') AND STRFTIME(@end_date, '%Y.%m.%d');
